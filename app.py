@@ -14,10 +14,10 @@ app = FastAPI(title="Wind Turbine Optimization API", version="3.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5500","http://127.0.0.1:3000","http://127.0.0.1:3030"],  # Allows all origins. Replace with a list of allowed domains if needed
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all HTTP methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
 )
 # Initialize clients
 gr_client = GradioClient("PradeepKumar11519/scenario-prediction-model")
