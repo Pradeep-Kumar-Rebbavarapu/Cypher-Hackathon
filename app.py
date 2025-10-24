@@ -14,7 +14,7 @@ app = FastAPI(title="Wind Turbine Optimization API", version="3.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins. Replace with a list of allowed domains if needed
+    allow_origins=["http://127.0.0.1:5500"],  # Allows all origins. Replace with a list of allowed domains if needed
     allow_credentials=True,
     allow_methods=["*"],  # Allows all HTTP methods
     allow_headers=["*"],  # Allows all headers
