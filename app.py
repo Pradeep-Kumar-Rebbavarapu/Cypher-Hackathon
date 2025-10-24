@@ -267,7 +267,7 @@ Summarize in 2–3 lines with recommended actions and stress impact.
 # ---------------------------
 # CSV Upload endpoint
 # ---------------------------
-@app.post("/predict-csv")
+@app.post("/predict")
 async def predict_csv_endpoint(file: UploadFile = File(...)):
     """
     Upload a CSV file with turbine telemetry data.
