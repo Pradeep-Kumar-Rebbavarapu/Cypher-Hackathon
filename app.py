@@ -1,43 +1,57 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from gradio_client import Client as GradioClient
 from groq import Groq
 import numpy as np
+import pandas as pd
 import json
+from io import StringIO
+from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
 
-app = FastAPI(title="Wind Turbine Optimization API", version="2.4")
+app = FastAPI(title="Wind Turbine Optimization API", version="3.0")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins. Replace with a list of allowed domains if needed
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all HTTP methods
+    allow_headers=["*"],  # Allows all headers
+)
 # Initialize clients
 gr_client = GradioClient("PradeepKumar11519/scenario-prediction-model")
 groq_client = Groq(api_key="YOUR_GROQ_API_KEY_HERE")
 
 
 # ---------------------------
-# Input schema
+# Required CSV columns
 # ---------------------------
-class InputData(BaseModel):
-    WindSpeed: float
-    StdDevWindSpeed: float
-    WindDirAbs: float
-    WindDirRel: float
-    Power: float
-    MaxPower: float
-    MinPower: float
-    StdDevPower: float
-    AvgRPow: float
-    Pitch: float
-    GenRPM: float
-    RotorRPM: float
-    EnvirTemp: float
-    NacelTemp: float
-    GearOilTemp: float
-    GearBearTemp: float
-    GenTemp: float
-    GenPh1Temp: float
-    GenPh2Temp: float
-    GenPh3Temp: float
-    GenBearTemp: float
-    Yaw: float
+REQUIRED_COLUMNS = [
+    'Timestamp',
+    'WindSpeed',
+    'StdDevWindSpeed',
+    'WindDirAbs',
+    'WindDirRel',
+    'Power',
+    'MaxPower',
+    'MinPower',
+    'StdDevPower',
+    'AvgRPow',
+    'Pitch',
+    'GenRPM',
+    'RotorRPM',
+    'EnvirTemp',
+    'NacelTemp',
+    'GearOilTemp',
+    'GearBearTemp',
+    'GenTemp',
+    'GenPh1Temp',
+    'GenPh2Temp',
+    'GenPh3Temp',
+    'GenBearTemp',
+    'Yaw'
+]
 
 
 # ---------------------------
@@ -97,14 +111,7 @@ def optimize_turbine(wind_speed: float, wind_direction: float, pitch: float, rpm
 # Structural Stress Model
 # ---------------------------
 def calculate_structural_stress(wind_speed: float, rpm: float, pitch: float, temp: float):
-    """
-    Calculate detailed structural stress breakdown:
-    1) Blade Load      ∝ wind_speed² × (1 - pitch/25)
-    2) Tower Stress    ∝ wind_speed × rpm / 20
-    3) Fatigue         ∝ rpm³ / 10000
-    4) Gearbox Heat    ∝ temp / 100 × rpm / 20
-    Normalized to [0,1] and combined as weighted average.
-    """
+    """Calculate detailed structural stress breakdown."""
     blade_load = np.clip((wind_speed ** 2) * (1 - pitch / 25) / 500, 0, 1)
     tower_stress = np.clip((wind_speed * rpm / 20) / 500, 0, 1)
     fatigue = np.clip((rpm ** 3) / 10000 / 1000, 0, 1)
@@ -121,68 +128,68 @@ def calculate_structural_stress(wind_speed: float, rpm: float, pitch: float, tem
 
 
 # ---------------------------
-# Main endpoint
+# Process single row
 # ---------------------------
-@app.post("/predict")
-def predict_endpoint(data: InputData):
+def process_turbine_row(row):
+    """Process a single turbine data row and return optimization results."""
     # Step 1: Current performance
-    current_power = calculate_power(data.WindSpeed, data.Pitch, data.GenRPM)
-    current_stress = calculate_structural_stress(data.WindSpeed, data.GenRPM, data.Pitch, data.GenTemp)
+    current_power = calculate_power(row['WindSpeed'], row['Pitch'], row['GenRPM'])
+    current_stress = calculate_structural_stress(row['WindSpeed'], row['GenRPM'], row['Pitch'], row['GenTemp'])
 
     # Step 2: Optimized performance
     optimized = optimize_turbine(
-        wind_speed=data.WindSpeed,
-        wind_direction=data.WindDirAbs,
-        pitch=data.Pitch,
-        rpm=data.GenRPM,
-        yaw=data.Yaw
+        wind_speed=row['WindSpeed'],
+        wind_direction=row['WindDirAbs'],
+        pitch=row['Pitch'],
+        rpm=row['GenRPM'],
+        yaw=row['Yaw']
     )
-    optimized_stress = calculate_structural_stress(data.WindSpeed, optimized["rpm"], optimized["pitch"], data.GenTemp)
+    optimized_stress = calculate_structural_stress(row['WindSpeed'], optimized["rpm"], optimized["pitch"], row['GenTemp'])
 
     # Step 3: Compute improvements
     power_improvement_kw = optimized["power"] - current_power
     power_improvement_percent = (power_improvement_kw / current_power * 100) if current_power > 0 else 0
     annual_energy_increase_mwh = (power_improvement_kw * 8760) / 1000
-    estimated_revenue_increase = annual_energy_increase_mwh * 50  # assume $50/MWh
+    estimated_revenue_increase = annual_energy_increase_mwh * 50
     structural_stress_reduction = (current_stress["total_stress"] - optimized_stress["total_stress"]) * 100
 
     # Step 4: Optimization recommendations
     optimization_steps = []
-    if abs(data.Pitch - optimized["pitch"]) > 0.5:
-        direction = "Decrease" if data.Pitch > optimized["pitch"] else "Increase"
-        optimization_steps.append(f"Step 1: {direction} blade pitch from {data.Pitch:.1f}° → {optimized['pitch']:.1f}°")
-    if abs(data.GenRPM - optimized["rpm"]) > 0.5:
-        direction = "Decrease" if data.GenRPM > optimized["rpm"] else "Increase"
-        optimization_steps.append(f"Step 2: {direction} generator RPM from {data.GenRPM:.1f} → {optimized['rpm']:.1f}")
-    if abs(data.Yaw - optimized["yaw"]) > 5:
-        optimization_steps.append(f"Step 3: Adjust yaw alignment from {data.Yaw:.0f}° → {optimized['yaw']:.0f}°")
+    if abs(row['Pitch'] - optimized["pitch"]) > 0.5:
+        direction = "Decrease" if row['Pitch'] > optimized["pitch"] else "Increase"
+        optimization_steps.append(f"Step 1: {direction} blade pitch from {row['Pitch']:.1f}° → {optimized['pitch']:.1f}°")
+    if abs(row['GenRPM'] - optimized["rpm"]) > 0.5:
+        direction = "Decrease" if row['GenRPM'] > optimized["rpm"] else "Increase"
+        optimization_steps.append(f"Step 2: {direction} generator RPM from {row['GenRPM']:.1f} → {optimized['rpm']:.1f}")
+    if abs(row['Yaw'] - optimized["yaw"]) > 5:
+        optimization_steps.append(f"Step 3: Adjust yaw alignment from {row['Yaw']:.0f}° → {optimized['yaw']:.0f}°")
     if not optimization_steps:
         optimization_steps.append("Turbine is already operating near optimal settings.")
 
     # Step 5: ML model prediction
     try:
         ml_output = gr_client.predict(
-            param_0=data.WindSpeed,
-            param_1=data.StdDevWindSpeed,
-            param_2=data.WindDirAbs,
-            param_3=data.WindDirRel,
-            param_4=data.Power,
-            param_5=data.MaxPower,
-            param_6=data.MinPower,
-            param_7=data.StdDevPower,
-            param_8=data.AvgRPow,
-            param_9=data.Pitch,
-            param_10=data.GenRPM,
-            param_11=data.RotorRPM,
-            param_12=data.EnvirTemp,
-            param_13=data.NacelTemp,
-            param_14=data.GearOilTemp,
-            param_15=data.GearBearTemp,
-            param_16=data.GenTemp,
-            param_17=data.GenPh1Temp,
-            param_18=data.GenPh2Temp,
-            param_19=data.GenPh3Temp,
-            param_20=data.GenBearTemp,
+            param_0=row['WindSpeed'],
+            param_1=row['StdDevWindSpeed'],
+            param_2=row['WindDirAbs'],
+            param_3=row['WindDirRel'],
+            param_4=row['Power'],
+            param_5=row['MaxPower'],
+            param_6=row['MinPower'],
+            param_7=row['StdDevPower'],
+            param_8=row['AvgRPow'],
+            param_9=row['Pitch'],
+            param_10=row['GenRPM'],
+            param_11=row['RotorRPM'],
+            param_12=row['EnvirTemp'],
+            param_13=row['NacelTemp'],
+            param_14=row['GearOilTemp'],
+            param_15=row['GearBearTemp'],
+            param_16=row['GenTemp'],
+            param_17=row['GenPh1Temp'],
+            param_18=row['GenPh2Temp'],
+            param_19=row['GenPh3Temp'],
+            param_20=row['GenBearTemp'],
             api_name="/predict_manual"
         )
         if isinstance(ml_output, str):
@@ -193,7 +200,7 @@ def predict_endpoint(data: InputData):
     # Step 6: AI summary
     prompt = f"""
 Wind turbine optimization summary:
-- Wind Speed: {data.WindSpeed:.2f} m/s
+- Wind Speed: {row['WindSpeed']:.2f} m/s
 - Current Power: {current_power:.2f} kW
 - Optimized Power: {optimized['power']:.2f} kW
 - Power Improvement: {power_improvement_percent:.2f}%
@@ -219,19 +226,20 @@ Summarize in 2–3 lines with recommended actions and stress impact.
             f"and {structural_stress_reduction:.1f}% stress reduction."
         )
 
-    # Step 7: Return structured response
+    # Return structured response
     return {
+        "timestamp": str(row['Timestamp']),
         "summary": summary,
         "telemetry": {
-            "wind_speed": data.WindSpeed,
-            "pitch": data.Pitch,
-            "rpm": data.GenRPM,
-            "yaw": data.Yaw,
+            "wind_speed": row['WindSpeed'],
+            "pitch": row['Pitch'],
+            "rpm": row['GenRPM'],
+            "yaw": row['Yaw'],
             "environment": {
-                "temperature": data.EnvirTemp,
-                "nacelle_temp": data.NacelTemp,
-                "gear_oil_temp": data.GearOilTemp,
-                "generator_temp": data.GenTemp
+                "temperature": row['EnvirTemp'],
+                "nacelle_temp": row['NacelTemp'],
+                "gear_oil_temp": row['GearOilTemp'],
+                "generator_temp": row['GenTemp']
             }
         },
         "current_state": {
@@ -257,18 +265,88 @@ Summarize in 2–3 lines with recommended actions and stress impact.
 
 
 # ---------------------------
+# CSV Upload endpoint
+# ---------------------------
+@app.post("/predict-csv")
+async def predict_csv_endpoint(file: UploadFile = File(...)):
+    """
+    Upload a CSV file with turbine telemetry data.
+    Returns optimization results for each row.
+    """
+    # Validate file type
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted")
+    
+    try:
+        # Read CSV file
+        contents = await file.read()
+        csv_data = StringIO(contents.decode('utf-8'))
+        df = pd.read_csv(csv_data)
+        
+        # Validate required columns
+        missing_columns = set(REQUIRED_COLUMNS) - set(df.columns)
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required columns: {', '.join(missing_columns)}"
+            )
+        
+        # Process each row
+        results = []
+        for idx, row in df.iterrows():
+            try:
+                result = process_turbine_row(row)
+                results.append(result)
+            except Exception as e:
+                results.append({
+                    "timestamp": str(row.get('Timestamp', 'Unknown')),
+                    "error": f"Processing failed: {str(e)}"
+                })
+        
+        return {
+            "status": "success",
+            "total_records": len(df),
+            "processed_records": len(results),
+            "results": results
+        }
+        
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="CSV file is empty")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV: {str(e)}")
+
+
+# ---------------------------
 # Root endpoint
 # ---------------------------
 @app.get("/")
 def root():
     return {
         "message": "Welcome to Wind Turbine Optimization API",
-        "version": "2.4",
+        "version": "3.0",
         "endpoints": {
-            "/predict": "POST - Submit turbine telemetry to receive optimization report",
+            "/predict-csv": "POST - Upload CSV file with turbine telemetry data",
             "/docs": "Interactive API documentation"
+        },
+        "csv_format": {
+            "required_columns": REQUIRED_COLUMNS,
+            "example": {
+                "Timestamp": "2025-01-15 10:30:00",
+                "WindSpeed": 12.5,
+                "Pitch": 5.2,
+                "GenRPM": 15.8,
+                "note": "... and 19 other required columns"
+            }
         }
     }
+
+
+# ---------------------------
+# Health check endpoint
+# ---------------------------
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "version": "3.0"}
 
 
 # ---------------------------

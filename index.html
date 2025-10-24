@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wind Turbine Optimization - CSV Upload</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .upload-section {
+            padding: 40px;
+            text-align: center;
+        }
+
+        .upload-box {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 60px 40px;
+            background: #f8f9ff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .upload-box:hover {
+            background: #eef1ff;
+            border-color: #764ba2;
+        }
+
+        .upload-box.dragover {
+            background: #e0e7ff;
+            border-color: #4c51bf;
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.3em;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .file-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e0e7ff;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .file-info.show {
+            display: block;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.1em;
+            border-radius: 50px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: transform 0.2s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results {
+            padding: 40px;
+            display: none;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .result-card {
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 5px solid #667eea;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e7ff;
+        }
+
+        .timestamp {
+            font-weight: bold;
+            color: #667eea;
+            font-size: 1.2em;
+        }
+
+        .summary {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-size: 1.05em;
+            line-height: 1.6;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .metric {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .metric-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .metric-value.positive {
+            color: #10b981;
+        }
+
+        .metric-value.negative {
+            color: #ef4444;
+        }
+
+        .optimization-steps {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+
+        .optimization-steps h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .optimization-steps ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .optimization-steps li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+
+        .optimization-steps li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .api-url-section {
+            padding: 20px 40px;
+            background: #f8f9ff;
+            border-top: 1px solid #e0e7ff;
+        }
+
+        .api-url-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-size: 1em;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌬️ Wind Turbine Optimization</h1>
+            <p>Upload CSV file for batch optimization analysis</p>
+        </div>
+
+        <div class="api-url-section">
+            <label for="apiUrl"><strong>API Endpoint URL:</strong></label>
+            <input 
+                type="text" 
+                id="apiUrl" 
+                class="api-url-input" 
+                value="http://localhost:8000/predict-csv"
+                placeholder="Enter your API endpoint URL">
+        </div>
+
+        <div class="upload-section">
+            <div class="upload-box" id="uploadBox">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">Click to upload or drag and drop</div>
+                <div class="upload-hint">CSV file with turbine telemetry data</div>
+                <input type="file" id="fileInput" accept=".csv">
+            </div>
+
+            <div class="file-info" id="fileInfo">
+                <strong>Selected file:</strong> <span id="fileName"></span><br>
+                <strong>Size:</strong> <span id="fileSize"></span>
+            </div>
+
+            <button class="btn" id="uploadBtn" disabled>Upload & Process</button>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Processing your data...</p>
+            </div>
+        </div>
+
+        <div class="results" id="results"></div>
+    </div>
+
+    <script>
+        const uploadBox = document.getElementById('uploadBox');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const apiUrlInput = document.getElementById('apiUrl');
+
+        let selectedFile = null;
+
+        // Click to upload
+        uploadBox.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // File selection
+        fileInput.addEventListener('change', (e) => {
+            handleFile(e.target.files[0]);
+        });
+
+        // Drag and drop
+        uploadBox.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadBox.classList.add('dragover');
+        });
+
+        uploadBox.addEventListener('dragleave', () => {
+            uploadBox.classList.remove('dragover');
+        });
+
+        uploadBox.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadBox.classList.remove('dragover');
+            handleFile(e.dataTransfer.files[0]);
+        });
+
+        function handleFile(file) {
+            if (!file) return;
+
+            if (!file.name.endsWith('.csv')) {
+                alert('Please upload a CSV file');
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = file.name;
+            fileSize.textContent = (file.size / 1024).toFixed(2) + ' KB';
+            fileInfo.classList.add('show');
+            uploadBtn.disabled = false;
+        }
+
+        // Upload and process
+        uploadBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const apiUrl = apiUrlInput.value.trim();
+            if (!apiUrl) {
+                alert('Please enter API endpoint URL');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            loading.classList.add('show');
+            results.classList.remove('show');
+            results.innerHTML = '';
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Upload failed');
+                }
+
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                results.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                results.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                uploadBtn.disabled = false;
+            }
+        });
+
+        function displayResults(data) {
+            let html = `
+                <h2>📊 Processing Results</h2>
+                <p style="margin: 15px 0; color: #666;">
+                    <strong>Total Records:</strong> ${data.total_records} | 
+                    <strong>Processed:</strong> ${data.processed_records}
+                </p>
+            `;
+
+            data.results.forEach((result, index) => {
+                if (result.error) {
+                    html += `
+                        <div class="result-card">
+                            <div class="result-header">
+                                <span class="timestamp">Record ${index + 1}: ${result.timestamp}</span>
+                            </div>
+                            <div class="error">❌ ${result.error}</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const metrics = result.performance_metrics;
+                const powerClass = metrics.power_improvement_percent > 0 ? 'positive' : 'negative';
+                const stressClass = metrics.structural_stress_reduction_percent > 0 ? 'positive' : 'negative';
+
+                html += `
+                    <div class="result-card">
+                        <div class="result-header">
+                            <span class="timestamp">⏰ ${result.timestamp}</span>
+                            <span style="color: #666;">Record ${index + 1}</span>
+                        </div>
+
+                        <div class="summary">
+                            <strong>💡 AI Summary:</strong><br>
+                            ${result.summary}
+                        </div>
+
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <div class="metric-label">Power Improvement</div>
+                                <div class="metric-value ${powerClass}">
+                                    ${metrics.power_improvement_percent > 0 ? '+' : ''}${metrics.power_improvement_percent.toFixed(2)}%
+                                </div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Power Gain</div>
+                                <div class="metric-value ${powerClass}">
+                                    ${metrics.power_gain_kw.toFixed(2)} kW
+                                </div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Annual Energy Gain</div>
+                                <div class="metric-value ${powerClass}">
+                                    ${metrics.annual_energy_gain_mwh.toFixed(2)} MWh
+                                </div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Revenue Increase</div>
+                                <div class="metric-value ${powerClass}">
+                                    $${metrics.estimated_revenue_gain_usd.toFixed(2)}
+                                </div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Stress Reduction</div>
+                                <div class="metric-value ${stressClass}">
+                                    ${metrics.structural_stress_reduction_percent > 0 ? '+' : ''}${metrics.structural_stress_reduction_percent.toFixed(2)}%
+                                </div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Current Power</div>
+                                <div class="metric-value">
+                                    ${result.current_state.power_kw} kW
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="optimization-steps">
+                            <h4>🔧 Optimization Steps:</h4>
+                            <ul>
+                                ${result.optimization_steps.map(step => `<li>${step}</li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            });
+
+            results.innerHTML = html;
+            results.classList.add('show');
+        }
+    </script>
+</body>
+</html>
