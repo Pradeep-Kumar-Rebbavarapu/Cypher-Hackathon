@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from gradio_client import Client as GradioClient
 from groq import Groq
@@ -9,6 +9,8 @@ import json
 from io import StringIO
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+import asyncio
+import os
 
 app = FastAPI(title="Wind Turbine Optimization API", version="3.0")
 
@@ -19,10 +21,13 @@ app.add_middleware(
     allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],  # Allow all headers
 )
+
 # Initialize clients
 gr_client = GradioClient("PradeepKumar11519/scenario-prediction-model")
 groq_client = Groq(api_key="YOUR_GROQ_API_KEY_HERE")
 
+# Predefined CSV file path
+PREDEFINED_CSV = "./test_wtih_ts.csv"
 
 # ---------------------------
 # Required CSV columns
@@ -265,13 +270,216 @@ Summarize in 2–3 lines with recommended actions and stress impact.
 
 
 # ---------------------------
-# CSV Upload endpoint
+# Helper function to load CSV
+# ---------------------------
+def load_predefined_csv():
+    """Load the predefined CSV file."""
+    if not os.path.exists(PREDEFINED_CSV):
+        raise FileNotFoundError(f"CSV file '{PREDEFINED_CSV}' not found in current directory")
+    
+    df = pd.read_csv(PREDEFINED_CSV)
+    
+    # Validate required columns
+    missing_columns = set(REQUIRED_COLUMNS) - set(df.columns)
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+    
+    return df
+
+
+# ---------------------------
+# NEW: Process Predefined CSV (All at once)
+# ---------------------------
+@app.get("/predict-all")
+async def predict_all():
+    """
+    Process ALL rows from the predefined CSV file (test_wtih_ts.csv).
+    Returns complete results for all rows.
+    """
+    try:
+        df = load_predefined_csv()
+        
+        results = []
+        for idx, row in df.iterrows():
+            try:
+                result = process_turbine_row(row)
+                results.append(result)
+            except Exception as e:
+                results.append({
+                    "timestamp": str(row.get('Timestamp', 'Unknown')),
+                    "error": f"Processing failed: {str(e)}"
+                })
+        
+        return {
+            "status": "success",
+            "csv_file": PREDEFINED_CSV,
+            "total_records": len(df),
+            "processed_records": len(results),
+            "results": results
+        }
+        
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV: {str(e)}")
+
+@app.get("/predict-stream/{limit}")
+async def predict_stream(limit: int = None, include_total_rows: bool = False):
+    """
+    Stream predictions row-by-row from predefined CSV.
+    Optional: specify /predict-stream/{limit} to process only top N rows.
+    Example:
+      /predict-stream            → stream all rows
+      /predict-stream/20         → stream only first 20 rows
+      /predict-stream/20?include_total_rows=true
+    """
+    async def generate_stream():
+        try:
+            df = load_predefined_csv()
+            total_rows = len(df)
+
+            # Trim to top N rows if limit provided
+            if limit and limit > 0:
+                df = df.head(limit)
+                message = f"Processing top {limit} rows (out of {total_rows})..."
+            else:
+                message = f"Processing all {total_rows} rows..."
+
+            selected_count = len(df)
+
+            # Initial metadata message
+            yield json.dumps({
+                "type": "metadata",
+                "csv_file": PREDEFINED_CSV,
+                "total_rows": total_rows,
+                "selected_rows": selected_count,
+                "message": message
+            }) + "\n"
+
+            # Optional total count message
+            if include_total_rows:
+                yield json.dumps({
+                    "type": "total_rows",
+                    "count": selected_count,
+                    "message": f"Total rows being processed: {selected_count}"
+                }) + "\n"
+
+            # Process and stream each row
+            for idx, row in df.iterrows():
+                try:
+                    result = process_turbine_row(row)
+                    yield json.dumps({
+                        "type": "row_result",
+                        "row_number": idx + 1,
+                        "total_rows": selected_count,
+                        "progress_percent": round((idx + 1) / selected_count * 100, 2),
+                        "data": result
+                    }) + "\n"
+                except Exception as e:
+                    yield json.dumps({
+                        "type": "row_error",
+                        "row_number": idx + 1,
+                        "total_rows": selected_count,
+                        "timestamp": str(row.get('Timestamp', 'Unknown')),
+                        "error": str(e)
+                    }) + "\n"
+
+                await asyncio.sleep(0.1)
+
+            # Completion message
+            yield json.dumps({
+                "type": "complete",
+                "total_rows": selected_count,
+                "message": "Processing complete"
+            }) + "\n"
+
+        except FileNotFoundError as e:
+            yield json.dumps({"type": "error", "error": str(e)}) + "\n"
+        except Exception as e:
+            yield json.dumps({"type": "error", "error": f"Error processing CSV: {str(e)}"}) + "\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="application/x-ndjson"
+    )
+
+
+
+
+# ---------------------------
+# NEW: Get specific row from predefined CSV
+# ---------------------------
+@app.get("/predict-row/{row_number}")
+async def predict_specific_row(row_number: int):
+    """
+    Process a specific row number from the predefined CSV file.
+    Row numbers start from 1.
+    """
+    try:
+        df = load_predefined_csv()
+        total_rows = len(df)
+        
+        if row_number < 1 or row_number > total_rows:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid row number. Must be between 1 and {total_rows}"
+            )
+        
+        # Get the specific row (convert to 0-indexed)
+        row = df.iloc[row_number - 1]
+        result = process_turbine_row(row)
+        
+        return {
+            "status": "success",
+            "csv_file": PREDEFINED_CSV,
+            "row_number": row_number,
+            "total_rows": total_rows,
+            "result": result
+        }
+        
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+# ---------------------------
+# NEW: Get CSV info
+# ---------------------------
+@app.get("/csv-info")
+async def get_csv_info():
+    """
+    Get information about the predefined CSV file.
+    """
+    try:
+        df = load_predefined_csv()
+        
+        return {
+            "csv_file": PREDEFINED_CSV,
+            "total_rows": len(df),
+            "total_columns": len(df.columns),
+            "columns": list(df.columns),
+            "first_timestamp": str(df.iloc[0]['Timestamp']) if len(df) > 0 else None,
+            "last_timestamp": str(df.iloc[-1]['Timestamp']) if len(df) > 0 else None,
+            "sample_data": df.head(3).to_dict('records')
+        }
+        
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading CSV: {str(e)}")
+
+
+# ---------------------------
+# OPTIONAL: Original CSV Upload endpoint
 # ---------------------------
 @app.post("/predict")
 async def predict_csv_endpoint(file: UploadFile = File(...)):
     """
     Upload a CSV file with turbine telemetry data.
-    Returns optimization results for each row.
+    Returns optimization results for ALL rows at once.
     """
     # Validate file type
     if not file.filename.endswith('.csv'):
@@ -324,19 +532,21 @@ def root():
     return {
         "message": "Welcome to Wind Turbine Optimization API",
         "version": "3.0",
+        "predefined_csv": PREDEFINED_CSV,
         "endpoints": {
-            "/predict-csv": "POST - Upload CSV file with turbine telemetry data",
-            "/docs": "Interactive API documentation"
+            "/csv-info": "GET - Get info about the predefined CSV file",
+            "/predict-all": "GET - Process ALL rows from predefined CSV at once",
+            "/predict-stream": "GET - Process predefined CSV row-by-row with streaming",
+            "/predict-row/{row_number}": "GET - Process a specific row number (1-indexed)",
+            "/predict": "POST - Upload and process a custom CSV file",
+            "/health": "GET - Health check",
+            "/docs": "GET - Interactive API documentation"
         },
-        "csv_format": {
-            "required_columns": REQUIRED_COLUMNS,
-            "example": {
-                "Timestamp": "2025-01-15 10:30:00",
-                "WindSpeed": 12.5,
-                "Pitch": 5.2,
-                "GenRPM": 15.8,
-                "note": "... and 19 other required columns"
-            }
+        "usage_examples": {
+            "get_csv_info": "GET /csv-info",
+            "process_all_rows": "GET /predict-all",
+            "stream_processing": "GET /predict-stream",
+            "specific_row": "GET /predict-row/5"
         }
     }
 
@@ -346,7 +556,13 @@ def root():
 # ---------------------------
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "version": "3.0"}
+    csv_exists = os.path.exists(PREDEFINED_CSV)
+    return {
+        "status": "healthy",
+        "version": "3.0",
+        "csv_file": PREDEFINED_CSV,
+        "csv_exists": csv_exists
+    }
 
 
 # ---------------------------
